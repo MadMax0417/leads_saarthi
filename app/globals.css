@@ -171,6 +171,11 @@ h1, h2, h3, p { margin-top: 0; }
 .lead-actions form { display: flex; }
 .sales-status-form { display: flex; min-width: 150px; align-items: center; gap: 5px; }
 .sales-status-form select { min-width: 0; height: 31px; flex: 1; padding: 0 7px; border: 1px solid #e1e6e2; border-radius: 4px; background: white; color: #526158; font-size: 10px; }
+.lead-notes-form { display: grid; min-width: 220px; gap: 6px; }
+.lead-notes-form textarea { width: 100%; min-height: 70px; padding: 7px 8px; border: 1px solid #dfe6e0; border-radius: 4px; outline: 0; color: #35443b; font: inherit; font-size: 10px; line-height: 1.5; resize: vertical; }
+.lead-notes-form textarea:focus { border-color: #78a48d; box-shadow: 0 0 0 2px #e6f1e9; }
+.lead-notes-form .button { justify-self: start; }
+.lead-notes-readonly { min-width: 180px; max-width: 260px; margin: 0; color: #526158; font-size: 10px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .status-save-button { display: grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; border: 1px solid #dfe7e1; border-radius: 4px; background: #fff; color: #56745f; cursor: pointer; }
 .status-save-button:disabled { opacity: .5; }
 .follow-up-cell { display: inline-flex; min-height: 30px; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid #e7e9d8; border-radius: 4px; background: #fcfbf2; color: #70633a; font-size: 10px; white-space: nowrap; cursor: pointer; }
@@ -324,6 +329,9 @@ h1, h2, h3, p { margin-top: 0; }
   .leads-table td[data-label="Contact"] { grid-column: 1 / 2; margin: 9px 0 0 44px; }
   .contact-cell a { max-width: calc(100vw - 100px); }
   .leads-table td[data-label="Review"] { grid-column: 1 / -1; margin: 8px 0 0 44px; }
+  .leads-table td[data-label="Notes"] { grid-column: 1 / -1; margin: 10px 0 0 44px; }
+  .lead-notes-form { min-width: 0; }
+  .lead-notes-readonly { min-width: 0; max-width: none; }
   .leads-table td[data-label="Status"], .leads-table td[data-label="Follow-up"] { grid-column: 1 / -1; margin: 8px 0 0 44px; }
   .sales-status-form { max-width: 210px; }
   .follow-up-dialog { padding: 16px; }

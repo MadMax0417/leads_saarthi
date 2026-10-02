@@ -26,6 +26,7 @@ import {
   archiveLead,
   importLeads,
   markLeadReviewed,
+  saveLeadNotes,
   setQualificationStatus,
   setSalesStatus,
 } from "@/app/lead-actions";
@@ -44,6 +45,7 @@ type Business = {
   email: string | null;
   google_maps_url: string | null;
   qualificationStatus: "pending" | "qualified" | "disqualified";
+  notes: string | null;
   reviewedAt: Date | null;
   salesStatus: "not_contacted" | "contacted" | "follow_up" | "messaged" | "called" | "meeting" | "won" | "lost";
   followUps: FollowUpRecord[];
@@ -180,8 +182,10 @@ export default function LeadsDashboard({ businesses, activeView, canReview, canM
 
         <div className="workspace-label">WORKSPACE</div>
         <nav className="side-nav" aria-label="Main navigation">
-          <Link className={activeView === "all" ? "nav-link nav-link-active" : "nav-link"} href="/dashboard"><BriefcaseBusiness size={17} /> Overview <span className="nav-count">{businesses.length}</span></Link>
-          <Link className={activeView === "unqualified" ? "nav-link nav-link-active" : "nav-link"} href="/dashboard/unqualified"><UsersRound size={17} /> Unqualified <span className="nav-count">{unqualifiedCount}</span></Link>
+          {!canManageSales && <>
+            <Link className={activeView === "all" ? "nav-link nav-link-active" : "nav-link"} href="/dashboard"><BriefcaseBusiness size={17} /> Overview <span className="nav-count">{businesses.length}</span></Link>
+            <Link className={activeView === "unqualified" ? "nav-link nav-link-active" : "nav-link"} href="/dashboard/unqualified"><UsersRound size={17} /> Unqualified <span className="nav-count">{unqualifiedCount}</span></Link>
+          </>}
           <Link className={activeView === "qualified" ? "nav-link nav-link-active" : "nav-link"} href="/dashboard/qualified"><Check size={17} /> Qualified <span className="nav-count">{qualifiedCount}</span></Link>
         </nav>
 
@@ -300,6 +304,7 @@ export default function LeadsDashboard({ businesses, activeView, canReview, canM
                         <th scope="col">Business</th>
                         <th scope="col">Location</th>
                         <th scope="col">Contact</th>
+                        <th scope="col">Notes</th>
                         {canManageSales && <>
                           <th scope="col">Status</th>
                           <th scope="col">Follow-up</th>
@@ -330,6 +335,25 @@ export default function LeadsDashboard({ businesses, activeView, canReview, canM
                                 {business.website && <a href={business.website} target="_blank" rel="noreferrer"><Globe2 size={13} />{business.website.replace(/^https?:\/\//i, "").replace(/\/$/, "")}</a>}
                                 {!business.phone && !business.email && !business.website && <span className="muted">No contact details</span>}
                               </div>
+                            </td>
+                            <td data-label="Notes">
+                              {canReview ? (
+                                <form action={saveLeadNotes} className="lead-notes-form">
+                                  <input type="hidden" name="workItemId" value={business.id} />
+                                  <label className="sr-only" htmlFor={`lead-notes-${business.id}`}>Notes for {business.businessName}</label>
+                                  <textarea
+                                    id={`lead-notes-${business.id}`}
+                                    name="notes"
+                                    rows={3}
+                                    maxLength={10000}
+                                    defaultValue={business.notes ?? ""}
+                                    placeholder="Add weaknesses or other review notes. Use new lines for paragraphs or start lines with - for bullets."
+                                  />
+                                  <PendingButton className="button button-secondary button-compact" pendingLabel="Saving...">Save notes</PendingButton>
+                                </form>
+                              ) : (
+                                <p className="lead-notes-readonly">{business.notes || <span className="muted">No notes yet</span>}</p>
+                              )}
                             </td>
                             {canManageSales && <>
                               <td data-label="Status">

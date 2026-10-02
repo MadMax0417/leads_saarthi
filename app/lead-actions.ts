@@ -258,6 +258,26 @@ export async function setQualificationStatus(formData: FormData) {
   revalidatePath("/dashboard/qualified");
 }
 
+export async function saveLeadNotes(formData: FormData) {
+  await requireReviewer();
+  const workItemId = String(formData.get("workItemId") ?? "");
+  const notesValue = formData.get("notes");
+  if (!/^[0-9a-f-]{36}$/i.test(workItemId) || typeof notesValue !== "string") {
+    throw new Error("Invalid lead notes.");
+  }
+
+  const notes = notesValue.trim();
+  if (notes.length > 10000) throw new Error("Lead notes must be 10,000 characters or fewer.");
+
+  await db.execute(sql`
+    UPDATE lead_work_items SET notes = ${notes || null}, updated_at = now()
+    WHERE id = ${workItemId}::uuid AND archived_at IS NULL
+  `);
+  revalidatePath("/dashboard");
+  revalidatePath("/dashboard/unqualified");
+  revalidatePath("/dashboard/qualified");
+}
+
 export async function markLeadReviewed(workItemId: string) {
   await requireReviewer();
   if (!/^[0-9a-f-]{36}$/i.test(workItemId)) throw new Error("Invalid lead.");

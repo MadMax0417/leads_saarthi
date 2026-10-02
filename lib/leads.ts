@@ -54,6 +54,7 @@ export async function getLeads(view: LeadView = "all") {
     qualificationStatus: leadWorkItems.qualificationStatus,
     fitClassification: leadWorkItems.fitClassification,
     salesStatus: leadWorkItems.contactStatus,
+    notes: leadWorkItems.notes,
     reviewedAt: leadWorkItems.reviewedAt,
     createdAt: leadWorkItems.createdAt,
   })
