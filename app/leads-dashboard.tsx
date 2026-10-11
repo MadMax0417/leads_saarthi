@@ -5,10 +5,10 @@ import {
   ArrowUpFromLine,
   BriefcaseBusiness,
   Check,
-  ExternalLink,
+  ChevronLeft,
+  ChevronRight,
   Globe2,
   LoaderCircle,
-  Mail,
   MapPin,
   PanelLeftClose,
   PanelLeftOpen,
@@ -19,115 +19,149 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { useDeferredValue, useEffect, useRef, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
-import { useDeferredValue, useRef, useState } from "react";
+import { archiveLeadsInView, exportLeads, importLeads } from "@/app/lead-actions";
 import {
-  archiveLeadsInView,
-  archiveLead,
-  importLeads,
-  markLeadReviewed,
-  saveLeadNotes,
-  setQualificationStatus,
-  setSalesStatus,
-} from "@/app/lead-actions";
-import type { FollowUpRecord } from "@/lib/leads";
-import FollowUpManager from "@/app/follow-up-manager";
+  LEAD_DEFAULT_PAGE_SIZE,
+  LEAD_PAGE_SIZES,
+  type LeadFilter,
+  type LeadSummary,
+  type LeadView,
+  type WorkspaceCounts,
+} from "@/lib/leads-shared";
 
-type Business = {
-  id: string;
-  businessName: string;
-  category: string | null;
-  address: string | null;
-  phone: string | null;
-  website: string | null;
-  rating: number | null;
-  review_count: number | null;
-  email: string | null;
-  google_maps_url: string | null;
-  qualificationStatus: "pending" | "qualified" | "disqualified";
-  notes: string | null;
-  reviewedAt: Date | null;
-  salesStatus: "not_contacted" | "contacted" | "follow_up" | "messaged" | "called" | "meeting" | "won" | "lost";
-  followUps: FollowUpRecord[];
+type DashboardFilters = {
+  q: string;
+  category: string;
+  filter: LeadFilter;
+  page: number;
+  pageSize: number;
 };
 
-type ViewFilter = "all" | "phone" | "website";
-
-type DashboardView = "all" | "qualified" | "unqualified";
-
-function compareText(first: string, second: string) {
-  const normalizedFirst = first.toLowerCase();
-  const normalizedSecond = second.toLowerCase();
-  return normalizedFirst < normalizedSecond ? -1 : normalizedFirst > normalizedSecond ? 1 : 0;
+function buildHref(basePath: string, current: DashboardFilters, overrides: Partial<DashboardFilters> = {}) {
+  const next = { ...current, ...overrides };
+  const params = new URLSearchParams();
+  if (next.q) params.set("q", next.q);
+  if (next.category && next.category !== "all") params.set("category", next.category);
+  if (next.filter && next.filter !== "all") params.set("filter", next.filter);
+  if (next.page > 1) params.set("page", String(next.page));
+  if (next.pageSize !== LEAD_DEFAULT_PAGE_SIZE) params.set("pageSize", String(next.pageSize));
+  const queryString = params.toString();
+  return queryString ? `${basePath}?${queryString}` : basePath;
 }
 
-function businessInitial(businessName: string) {
-  return Array.from(businessName)[0]?.toUpperCase() ?? "";
+function pageItems(current: number, pageCount: number): (number | "gap")[] {
+  if (pageCount <= 7) return Array.from({ length: pageCount }, (_, index) => index + 1);
+
+  const items: (number | "gap")[] = [1];
+  const start = Math.max(2, current - 1);
+  const end = Math.min(pageCount - 1, current + 1);
+  if (start > 2) items.push("gap");
+  for (let page = start; page <= end; page += 1) items.push(page);
+  if (end < pageCount - 1) items.push("gap");
+  items.push(pageCount);
+  return items;
 }
 
-function PendingButton({ children, pendingLabel, className, ariaLabel }: {
-  children: React.ReactNode;
-  pendingLabel: string;
-  className: string;
-  ariaLabel?: string;
-}) {
-  const { pending } = useFormStatus();
-
-  return (
-    <button className={className} type="submit" disabled={pending} aria-busy={pending}
-      aria-label={pending ? pendingLabel : ariaLabel} title={ariaLabel}>
-      {pending && <LoaderCircle className="loading-spinner" size={14} aria-hidden="true" />}
-      {pending ? pendingLabel : children}
-    </button>
-  );
+function viewTotalFor(activeView: LeadView, counts: WorkspaceCounts) {
+  if (activeView === "qualified") return counts.qualified;
+  if (activeView === "unqualified") return counts.unqualified;
+  return counts.total;
 }
 
-export default function LeadsDashboard({ businesses, activeView, canReview, canManageSales }: {
-  businesses: Business[];
-  activeView: DashboardView;
+export default function LeadsDashboard({
+  activeView,
+  canReview,
+  canManageSales,
+  counts,
+  summary,
+  categories,
+  q,
+  category,
+  filter,
+  page,
+  pageSize,
+  pageCount,
+  total,
+  children,
+}: {
+  activeView: LeadView;
   canReview: boolean;
   canManageSales: boolean;
+  counts: WorkspaceCounts;
+  summary: LeadSummary;
+  categories: string[];
+  q: string;
+  category: string;
+  filter: LeadFilter;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+  total: number;
+  children: React.ReactNode;
 }) {
+  const router = useRouter();
+  const basePath = usePathname();
   const fileInput = useRef<HTMLInputElement>(null);
-  const [search, setSearch] = useState("");
-  const [category, setCategory] = useState("all");
-  const [viewFilter, setViewFilter] = useState<ViewFilter>("all");
+  const [search, setSearch] = useState(q);
   const [message, setMessage] = useState("");
   const [isImporting, setIsImporting] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
   const deferredSearch = useDeferredValue(search);
+  const pushedQuery = useRef(q);
+  const [isNavigating, startNavigation] = useTransition();
 
-  const viewBusinesses = businesses.filter((business) => activeView === "all" ||
-    (activeView === "qualified" ? business.qualificationStatus === "qualified" : business.qualificationStatus !== "qualified"));
-  const qualifiedCount = businesses.filter((business) => business.qualificationStatus === "qualified").length;
-  const unqualifiedCount = businesses.length - qualifiedCount;
-  const categories = [...new Set(viewBusinesses.map((business) => business.category).filter(Boolean))]
-    .sort((first, second) => compareText(first!, second!));
-  const normalizedSearch = deferredSearch.trim().toLowerCase();
-  const visibleBusinesses = viewBusinesses
-    .filter((business) => {
-      const matchesSearch = !normalizedSearch || [
-        business.businessName,
-        business.category,
-        business.address,
-        business.phone,
-        business.website,
-        business.email,
-      ].some((value) => value?.toLowerCase().includes(normalizedSearch));
-      const matchesCategory = category === "all" || business.category === category;
-      const matchesView = viewFilter === "all" ||
-        (viewFilter === "phone" && Boolean(business.phone)) ||
-        (viewFilter === "website" && Boolean(business.website));
-      return matchesSearch && matchesCategory && matchesView;
-    })
-    .sort((first, second) => compareText(first.businessName, second.businessName));
+  const currentFilters: DashboardFilters = { q, category, filter, page, pageSize };
+  const viewTotal = viewTotalFor(activeView, counts);
+  const phoneShare = summary.total ? Math.round(summary.phoneCount / summary.total * 100) : 0;
+  const websiteShare = summary.total ? Math.round(summary.websiteCount / summary.total * 100) : 0;
+  const rangeStart = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const rangeEnd = Math.min(page * pageSize, total);
 
-  const phoneCount = viewBusinesses.filter((business) => business.phone).length;
-  const websiteCount = viewBusinesses.filter((business) => business.website).length;
-  const ratedBusinesses = viewBusinesses.filter((business) => business.rating !== null);
-  const averageRating = ratedBusinesses.length
-    ? ratedBusinesses.reduce((total, business) => total + business.rating!, 0) / ratedBusinesses.length
-    : null;
+  // Adopt an externally changed query (e.g. back/forward navigation) into the box.
+  useEffect(() => {
+    if (q !== pushedQuery.current) {
+      pushedQuery.current = q;
+      setSearch(q);
+    }
+  }, [q]);
+
+  // Push the debounced search into the URL, resetting to the first page.
+  useEffect(() => {
+    const next = deferredSearch.trim();
+    if (next === pushedQuery.current) return;
+    pushedQuery.current = next;
+    startNavigation(() => {
+      router.replace(
+        buildHref(basePath, currentFilters, { q: next, page: 1 }),
+        { scroll: false },
+      );
+    });
+    // currentFilters is rebuilt from the same primitive props each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deferredSearch, basePath, category, filter, page, pageSize, q, router, startNavigation]);
+
+  // Send the viewport back to the top whenever the result set itself changes
+  // (page, filters, page size) so the refreshed list starts in view.
+  function goTo(href: string, scrollToTop = false) {
+    if (scrollToTop) window.scrollTo({ top: 0 });
+    startNavigation(() => router.push(href, { scroll: false }));
+  }
+
+  // Keep Link semantics for modified clicks (new tab/window) while routing
+  // plain clicks through a transition so the table can show its skeleton.
+  function navigateFromLink(
+    event: React.MouseEvent<HTMLAnchorElement>,
+    overrides: Partial<DashboardFilters>,
+    scrollToTop = true,
+  ) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    goTo(buildHref(basePath, currentFilters, overrides), scrollToTop);
+  }
 
   async function importFile(file?: File) {
     if (!file) return;
@@ -146,30 +180,36 @@ export default function LeadsDashboard({ businesses, activeView, canReview, canM
     }
   }
 
-  function exportBusinesses() {
-    const exportData = {
-      schema_version: "maps-leads/v1",
-      captured_at: new Date().toISOString(),
-      source: "google_maps",
-      businesses: viewBusinesses.map((business) => ({
-        businessName: business.businessName,
-        category: business.category,
-        address: business.address,
-        phone: business.phone,
-        website: business.website,
-        rating: business.rating,
-        review_count: business.review_count,
-        email: business.email,
-        google_maps_url: business.google_maps_url,
-      })),
-    };
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "maps-leads.json";
-    link.click();
-    URL.revokeObjectURL(url);
+  async function exportBusinesses() {
+    setMessage("");
+    setIsExporting(true);
+    try {
+      const rows = await exportLeads(activeView, { q, category, filter });
+      const exportData = {
+        schema_version: "maps-leads/v1",
+        captured_at: new Date().toISOString(),
+        source: "google_maps",
+        businesses: rows,
+      };
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "maps-leads.json";
+      link.click();
+      URL.revokeObjectURL(url);
+      setMessage(`Exported ${rows.length} ${rows.length === 1 ? "business" : "businesses"} as JSON.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not export leads.");
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
+  function resetFilters() {
+    setSearch("");
+    pushedQuery.current = "";
+    goTo(basePath, true);
   }
 
   return (
@@ -183,10 +223,10 @@ export default function LeadsDashboard({ businesses, activeView, canReview, canM
         <div className="workspace-label">WORKSPACE</div>
         <nav className="side-nav" aria-label="Main navigation">
           {!canManageSales && <>
-            <Link className={activeView === "all" ? "nav-link nav-link-active" : "nav-link"} href="/dashboard"><BriefcaseBusiness size={17} /> Overview <span className="nav-count">{businesses.length}</span></Link>
-            <Link className={activeView === "unqualified" ? "nav-link nav-link-active" : "nav-link"} href="/dashboard/unqualified"><UsersRound size={17} /> Unqualified <span className="nav-count">{unqualifiedCount}</span></Link>
+            <Link className={activeView === "all" ? "nav-link nav-link-active" : "nav-link"} href="/dashboard"><BriefcaseBusiness size={17} /> Overview <span className="nav-count">{counts.total.toLocaleString("en-IN")}</span></Link>
+            <Link className={activeView === "unqualified" ? "nav-link nav-link-active" : "nav-link"} href="/dashboard/unqualified"><UsersRound size={17} /> Unqualified <span className="nav-count">{counts.unqualified.toLocaleString("en-IN")}</span></Link>
           </>}
-          <Link className={activeView === "qualified" ? "nav-link nav-link-active" : "nav-link"} href="/dashboard/qualified"><Check size={17} /> Qualified <span className="nav-count">{qualifiedCount}</span></Link>
+          <Link className={activeView === "qualified" ? "nav-link nav-link-active" : "nav-link"} href="/dashboard/qualified"><Check size={17} /> Qualified <span className="nav-count">{counts.qualified.toLocaleString("en-IN")}</span></Link>
         </nav>
 
         <div className="sidebar-bottom">
@@ -226,43 +266,44 @@ export default function LeadsDashboard({ businesses, activeView, canReview, canM
               <h1>{activeView === "qualified" ? "Qualified leads" : activeView === "unqualified" ? "Unqualified leads" : "Your leads"}</h1>
               <p className="heading-description">{activeView === "qualified" ? "Leads you have approved for follow-up." : activeView === "unqualified" ? "Review new submissions and decide which leads fit." : "A clear view of the businesses you’ve collected."}</p>
             </div>
-            <button className="button button-secondary export-button" onClick={exportBusinesses} disabled={!businesses.length}>
-              <ArrowDownToLine size={16} /> Export JSON
+            <button className="button button-secondary export-button" onClick={exportBusinesses} disabled={total === 0 || isExporting}>
+              {isExporting ? <LoaderCircle className="loading-spinner" size={16} /> : <ArrowDownToLine size={16} />}
+              {isExporting ? "Exporting..." : "Export JSON"}
             </button>
           </section>
 
           {activeView !== "unqualified" && <section className="metric-grid" aria-label="Lead summary" id="overview-metrics">
             <article className="metric metric-total">
               <div className="metric-topline"><span>Total leads</span><span className="metric-icon metric-icon-green"><UsersRound size={17} /></span></div>
-              <div className="metric-value">{businesses.length.toLocaleString("en-IN")}</div>
+              <div className="metric-value">{summary.total.toLocaleString("en-IN")}</div>
               <div className="metric-note">in this workspace</div>
             </article>
             <article className="metric">
               <div className="metric-topline"><span>Phone numbers</span><span className="metric-icon metric-icon-coral"><Phone size={17} /></span></div>
-              <div className="metric-value">{phoneCount.toLocaleString("en-IN")}</div>
-              <div className="metric-note">{businesses.length ? `${Math.round(phoneCount / businesses.length * 100)}% of leads` : "Ready when you are"}</div>
+              <div className="metric-value">{summary.phoneCount.toLocaleString("en-IN")}</div>
+              <div className="metric-note">{summary.total ? `${phoneShare}% of leads` : "Ready when you are"}</div>
             </article>
             <article className="metric">
               <div className="metric-topline"><span>Websites</span><span className="metric-icon metric-icon-gold"><Globe2 size={17} /></span></div>
-              <div className="metric-value">{websiteCount.toLocaleString("en-IN")}</div>
-              <div className="metric-note">{businesses.length ? `${Math.round(websiteCount / businesses.length * 100)}% of leads` : "Ready when you are"}</div>
+              <div className="metric-value">{summary.websiteCount.toLocaleString("en-IN")}</div>
+              <div className="metric-note">{summary.total ? `${websiteShare}% of leads` : "Ready when you are"}</div>
             </article>
             <article className="metric">
               <div className="metric-topline"><span>Average rating</span><span className="metric-icon metric-icon-blue"><Star size={17} /></span></div>
-              <div className="metric-value">{averageRating === null ? "—" : averageRating.toFixed(1)}<span className="metric-suffix">{averageRating !== null && <Star size={15} fill="currentColor" />}</span></div>
+              <div className="metric-value">{summary.averageRating === null ? "—" : summary.averageRating.toFixed(1)}<span className="metric-suffix">{summary.averageRating !== null && <Star size={15} fill="currentColor" />}</span></div>
               <div className="metric-note">across rated businesses</div>
             </article>
           </section>}
 
-          <section className="leads-section" id="leads">
+          <section className="leads-section" id="leads" aria-busy={isNavigating}>
             <div className="section-heading">
               <div>
                 <h2>Business directory</h2>
-                <p>{businesses.length ? `${visibleBusinesses.length} of ${businesses.length} businesses` : "Your collected businesses will appear here"}</p>
+                <p>{summary.total ? (total === summary.total ? `${summary.total} businesses` : `${total} of ${summary.total} businesses`) : "Your collected businesses will appear here"}</p>
               </div>
-              {canReview && viewBusinesses.length > 0 && (
+              {canReview && viewTotal > 0 && (
                 <form action={archiveLeadsInView.bind(null, activeView)}>
-                  <PendingButton className="text-button clear-button" pendingLabel="Archiving...">Archive all</PendingButton>
+                  <ArchiveButton count={viewTotal} />
                 </form>
               )}
             </div>
@@ -272,7 +313,7 @@ export default function LeadsDashboard({ businesses, activeView, canReview, canM
                 <Search size={17} />
                 <input
                   type="search"
-                  placeholder="Search businesses, contacts, locations..."
+                  placeholder="Search businesses, contacts, addresses..."
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   aria-label="Search leads"
@@ -280,173 +321,22 @@ export default function LeadsDashboard({ businesses, activeView, canReview, canM
                 {search && <button className="clear-search" onClick={() => setSearch("")} aria-label="Clear search"><X size={15} /></button>}
               </label>
               <div className="filter-group" role="group" aria-label="Filter leads">
-                <button className={viewFilter === "all" ? "filter-button filter-active" : "filter-button"} onClick={() => setViewFilter("all")}>All leads</button>
-                <button className={viewFilter === "phone" ? "filter-button filter-active" : "filter-button"} onClick={() => setViewFilter("phone")}>Has phone</button>
-                <button className={viewFilter === "website" ? "filter-button filter-active" : "filter-button"} onClick={() => setViewFilter("website")}>Has website</button>
+                <Link className={filter === "all" ? "filter-button filter-active" : "filter-button"} href={buildHref(basePath, currentFilters, { filter: "all", page: 1 })} scroll={false} onClick={(event) => navigateFromLink(event, { filter: "all", page: 1 })}>All leads</Link>
+                <Link className={filter === "phone" ? "filter-button filter-active" : "filter-button"} href={buildHref(basePath, currentFilters, { filter: "phone", page: 1 })} scroll={false} onClick={(event) => navigateFromLink(event, { filter: "phone", page: 1 })}>Has phone</Link>
+                <Link className={filter === "website" ? "filter-button filter-active" : "filter-button"} href={buildHref(basePath, currentFilters, { filter: "website", page: 1 })} scroll={false} onClick={(event) => navigateFromLink(event, { filter: "website", page: 1 })}>Has website</Link>
               </div>
               <label className="category-select-label">
                 <span className="sr-only">Filter by category</span>
-                <select value={category} onChange={(event) => setCategory(event.target.value)}>
+                <select value={category} onChange={(event) => goTo(buildHref(basePath, currentFilters, { category: event.target.value, page: 1 }), true)}>
                   <option value="all">All categories</option>
-                  {categories.map((item) => <option key={item} value={item!}>{item}</option>)}
+                  {categories.map((item) => <option key={item} value={item}>{item}</option>)}
                 </select>
               </label>
             </div>
 
             {message && <p className="status-message" role="status">{message}</p>}
 
-            {businesses.length ? (
-              visibleBusinesses.length ? (
-                <div className="table-wrap">
-                  <table className="leads-table">
-                    <thead>
-                      <tr>
-                        <th scope="col">Business</th>
-                        <th scope="col">Location</th>
-                        <th scope="col">Contact</th>
-                        <th scope="col">Notes</th>
-                        {canManageSales && <>
-                          <th scope="col">Status</th>
-                          <th scope="col">Follow-up</th>
-                        </>}
-                        <th scope="col">Google rating</th>
-                        <th scope="col">Review</th>
-                        <th scope="col"><span className="sr-only">Actions</span></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {visibleBusinesses.map((business) => {
-                        return (
-                          <tr key={business.id}>
-                            <td data-label="Business">
-                              <div className="business-cell">
-                                <div className="business-avatar">{businessInitial(business.businessName)}</div>
-                                <div className="business-details">
-                                  <a className="business-name" href={business.google_maps_url || undefined} target="_blank" rel="noreferrer">{business.businessName}{business.google_maps_url && <ExternalLink size={13} />}</a>
-                                  <span className="business-category">{business.category || "Uncategorized"}</span>
-                                </div>
-                              </div>
-                            </td>
-                            <td data-label="Location"><span className="location-cell"><MapPin size={14} />{business.address || "Not listed"}</span></td>
-                            <td data-label="Contact">
-                              <div className="contact-cell">
-                                {business.phone && <a href={`tel:${business.phone}`}><Phone size={13} />{business.phone}</a>}
-                                {business.email && <a href={`mailto:${business.email}`}><Mail size={13} />{business.email}</a>}
-                                {business.website && <a href={business.website} target="_blank" rel="noreferrer"><Globe2 size={13} />{business.website.replace(/^https?:\/\//i, "").replace(/\/$/, "")}</a>}
-                                {!business.phone && !business.email && !business.website && <span className="muted">No contact details</span>}
-                              </div>
-                            </td>
-                            <td data-label="Notes">
-                              {canReview ? (
-                                <form action={saveLeadNotes} className="lead-notes-form">
-                                  <input type="hidden" name="workItemId" value={business.id} />
-                                  <label className="sr-only" htmlFor={`lead-notes-${business.id}`}>Notes for {business.businessName}</label>
-                                  <textarea
-                                    id={`lead-notes-${business.id}`}
-                                    name="notes"
-                                    rows={3}
-                                    maxLength={10000}
-                                    defaultValue={business.notes ?? ""}
-                                    placeholder="Add weaknesses or other review notes. Use new lines for paragraphs or start lines with - for bullets."
-                                  />
-                                  <PendingButton className="button button-secondary button-compact" pendingLabel="Saving...">Save notes</PendingButton>
-                                </form>
-                              ) : (
-                                <p className="lead-notes-readonly">{business.notes || <span className="muted">No notes yet</span>}</p>
-                              )}
-                            </td>
-                            {canManageSales && <>
-                              <td data-label="Status">
-                                <form action={setSalesStatus} className="sales-status-form">
-                                  <input type="hidden" name="workItemId" value={business.id} />
-                                  <select name="status" aria-label={`Sales status for ${business.businessName}`} defaultValue={[
-                                    "messaged", "called", "meeting", "won", "lost",
-                                  ].includes(business.salesStatus) ? business.salesStatus : ""}>
-                                    <option value="" disabled>Select status</option>
-                                    <option value="messaged">Messaged</option>
-                                    <option value="called">Called</option>
-                                    <option value="meeting">Meeting</option>
-                                    <option value="won">Won</option>
-                                    <option value="lost">Lost</option>
-                                  </select>
-                                  <PendingButton className="status-save-button" pendingLabel="Saving..." ariaLabel={`Save sales status for ${business.businessName}`}>
-                                    <Check size={14} />
-                                  </PendingButton>
-                                </form>
-                              </td>
-                              <td data-label="Follow-up">
-                                <FollowUpManager workItemId={business.id} followUps={business.followUps} />
-                              </td>
-                            </>}
-                            <td data-label="Google rating">
-                              {business.rating !== null ? (
-                                <span className="rating-cell"><Star size={14} fill="currentColor" />{business.rating.toFixed(1)}<span>{business.review_count === null ? "" : `(${business.review_count.toLocaleString("en-IN")})`}</span></span>
-                              ) : <span className="muted">Not rated</span>}
-                            </td>
-                            <td data-label="Review">
-                              <span className={`lead-status lead-status-${business.qualificationStatus}`}>
-                                {business.qualificationStatus === "qualified" ? "Qualified" : business.qualificationStatus === "disqualified" ? "Disqualified" : business.reviewedAt ? "Reviewed" : "Needs review"}
-                              </span>
-                            </td>
-                            <td className="action-cell">
-                              <div className="lead-actions">
-                                {canReview ? <>
-                                {business.qualificationStatus === "pending" && !business.reviewedAt && (
-                                  <form action={markLeadReviewed.bind(null, business.id)}>
-                                    <PendingButton className="text-button" pendingLabel="Saving...">Mark reviewed</PendingButton>
-                                  </form>
-                                )}
-                                {business.qualificationStatus === "pending" && business.reviewedAt && (
-                                  <>
-                                    <form action={setQualificationStatus}>
-                                      <input type="hidden" name="workItemId" value={business.id} />
-                                      <input type="hidden" name="status" value="qualified" />
-                                      <PendingButton className="button button-primary button-compact" pendingLabel="Saving...">Qualify</PendingButton>
-                                    </form>
-                                    <form action={setQualificationStatus}>
-                                      <input type="hidden" name="workItemId" value={business.id} />
-                                      <input type="hidden" name="status" value="disqualified" />
-                                      <PendingButton className="text-button" pendingLabel="Saving...">Disqualify</PendingButton>
-                                    </form>
-                                  </>
-                                )}
-                                {business.qualificationStatus === "qualified" && (
-                                  <form action={setQualificationStatus}>
-                                    <input type="hidden" name="workItemId" value={business.id} />
-                                    <input type="hidden" name="status" value="disqualified" />
-                                    <PendingButton className="text-button" pendingLabel="Saving...">Move to unqualified</PendingButton>
-                                  </form>
-                                )}
-                                {business.qualificationStatus === "disqualified" && (
-                                  <form action={setQualificationStatus}>
-                                    <input type="hidden" name="workItemId" value={business.id} />
-                                    <input type="hidden" name="status" value="qualified" />
-                                    <PendingButton className="text-button" pendingLabel="Saving...">Qualify</PendingButton>
-                                  </form>
-                                )}
-                                <form action={archiveLead.bind(null, business.id)}>
-                                  <PendingButton className="icon-button remove-button" pendingLabel="Archiving..." ariaLabel={`Archive ${business.businessName}`}>
-                                    <X size={16} />
-                                  </PendingButton>
-                                </form>
-                                </> : <span className="muted">Review handled by Kiran</span>}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <div className="empty-filter-state">
-                  <Search size={21} />
-                  <h3>No matching businesses</h3>
-                  <p>Try another search or adjust your filters.</p>
-                  <button className="text-button" onClick={() => { setSearch(""); setCategory("all"); setViewFilter("all"); }}>Reset filters</button>
-                </div>
-              )
-            ) : (
+            {counts.total === 0 ? (
               <div className="empty-state">
                 <div className="empty-illustration"><span className="empty-pin"><MapPin size={24} /></span><span className="empty-star"><Star size={15} /></span></div>
                 <h3>Start with your first list</h3>
@@ -457,6 +347,56 @@ export default function LeadsDashboard({ businesses, activeView, canReview, canM
                 </button>
                 <span className="file-hint">Accepts the maps-leads/v1 export format</span>
               </div>
+            ) : total === 0 ? (
+              <div className="empty-filter-state">
+                <Search size={21} />
+                <h3>No matching businesses</h3>
+                <p>Try another search or adjust your filters.</p>
+                <button className="text-button" onClick={resetFilters}>Reset filters</button>
+              </div>
+            ) : (
+              <>
+                {isNavigating ? (
+                  <>
+                    <LeadTableSkeleton rows={Math.min(pageSize, 8)} />
+                    <span className="sr-only" role="status">Loading the next view…</span>
+                  </>
+                ) : children}
+                <nav className="pagination" aria-label="Lead pages">
+                  <span className="pagination-summary">Showing {rangeStart.toLocaleString("en-IN")}–{rangeEnd.toLocaleString("en-IN")} of {total.toLocaleString("en-IN")} businesses</span>
+                  <div className="pagination-controls">
+                    {page > 1 ? (
+                      <Link className="pagination-button" href={buildHref(basePath, currentFilters, { page: page - 1 })} scroll={false} aria-label="Previous page" onClick={(event) => navigateFromLink(event, { page: page - 1 })}><ChevronLeft size={15} /> Prev</Link>
+                    ) : (
+                      <span className="pagination-button pagination-button-disabled" aria-disabled="true"><ChevronLeft size={15} /> Prev</span>
+                    )}
+                    {pageItems(page, pageCount).map((item, index) => item === "gap" ? (
+                      <span className="pagination-gap" key={`gap-${index}`}>…</span>
+                    ) : item === page ? (
+                      <span key={item} className="pagination-page pagination-page-active" aria-current="page">{item}</span>
+                    ) : (
+                      <Link
+                        key={item}
+                        className="pagination-page"
+                        href={buildHref(basePath, currentFilters, { page: item })}
+                        scroll={false}
+                        onClick={(event) => navigateFromLink(event, { page: item })}
+                      >{item}</Link>
+                    ))}
+                    {page < pageCount ? (
+                      <Link className="pagination-button" href={buildHref(basePath, currentFilters, { page: page + 1 })} scroll={false} aria-label="Next page" onClick={(event) => navigateFromLink(event, { page: page + 1 })}>Next <ChevronRight size={15} /></Link>
+                    ) : (
+                      <span className="pagination-button pagination-button-disabled" aria-disabled="true">Next <ChevronRight size={15} /></span>
+                    )}
+                    <label className="pagination-size">
+                      <span className="sr-only">Rows per page</span>
+                      <select value={pageSize} onChange={(event) => goTo(buildHref(basePath, currentFilters, { pageSize: Number(event.target.value), page: 1 }), true)}>
+                        {LEAD_PAGE_SIZES.map((size) => <option key={size} value={size}>{size} / page</option>)}
+                      </select>
+                    </label>
+                  </div>
+                </nav>
+              </>
             )}
           </section>
           <footer className="page-footer"><span>LEADSSAARTHI</span><span>Built for better follow-through.</span></footer>
@@ -470,6 +410,27 @@ export default function LeadsDashboard({ businesses, activeView, canReview, canM
         accept="application/json,.json"
         onChange={(event) => importFile(event.target.files?.[0])}
       />
+    </div>
+  );
+}
+
+function ArchiveButton({ count }: { count: number }) {
+  const { pending } = useFormStatus();
+  return (
+    <button className="text-button clear-button" type="submit" disabled={pending} aria-busy={pending}>
+      {pending ? "Archiving..." : `Archive all (${count.toLocaleString("en-IN")})`}
+    </button>
+  );
+}
+
+/** Placeholder rows shown while a page/filter navigation is in flight. */
+function LeadTableSkeleton({ rows }: { rows: number }) {
+  return (
+    <div className="table-skeleton" aria-hidden="true">
+      <div className="skeleton-block table-skeleton-head" />
+      {Array.from({ length: rows }, (_, index) => (
+        <div className="skeleton-block table-skeleton-row" key={index} />
+      ))}
     </div>
   );
 }

@@ -169,3 +169,64 @@ export const websiteAssessments = pgTable("website_assessments", {
   assessorVersion: varchar("assessor_version", { length: 64 }),
   details: jsonb("details").$type<Record<string, unknown>>(),
 });
+
+// --- Bulk WhatsApp sender (whatsapp/ service) -------------------------------
+
+export const whatsappAttemptStatusEnum = pgEnum("whatsapp_attempt_status", [
+  "sent",
+  "failed",
+  "not_on_whatsapp",
+  "skipped",
+]);
+
+export const whatsappRunStatusEnum = pgEnum("whatsapp_run_status", [
+  "running",
+  "completed",
+  "stopped",
+  "failed",
+]);
+
+export const whatsappRuns = pgTable("whatsapp_runs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  kind: varchar("kind", { length: 32 }).notNull(),
+  status: whatsappRunStatusEnum("status").notNull().default("running"),
+  stopReason: text("stop_reason"),
+  sentCount: integer("sent_count").notNull().default(0),
+  failedCount: integer("failed_count").notNull().default(0),
+  skippedCount: integer("skipped_count").notNull().default(0),
+  pendingCount: integer("pending_count").notNull().default(0),
+  consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+  errorText: text("error_text"),
+  startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" }),
+});
+
+export const whatsappRecipients = pgTable("whatsapp_recipients", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  businessId: uuid("business_id").notNull().references(() => businesses.id, { onDelete: "restrict" }),
+  businessName: text("business_name").notNull(),
+  phone: text("phone"),
+  whatsappNumber: text("whatsapp_number"),
+  sourceNumber: text("source_number").notNull(),
+  isMessageSent: boolean("is_message_sent").notNull().default(false),
+  isThisWhatsappNumber: boolean("is_this_whatsapp_number").notNull().default(true),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  sentAt: timestamp("sent_at", { withTimezone: true, mode: "date" }),
+  lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true, mode: "date" }),
+  lastError: text("last_error"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("whatsapp_recipients_business_unique").on(table.businessId),
+]);
+
+export const whatsappMessageAttempts = pgTable("whatsapp_message_attempts", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  recipientId: uuid("recipient_id").notNull().references(() => whatsappRecipients.id, { onDelete: "cascade" }),
+  runId: uuid("run_id").references(() => whatsappRuns.id, { onDelete: "set null" }),
+  templateKey: varchar("template_key", { length: 64 }),
+  status: whatsappAttemptStatusEnum("status").notNull(),
+  providerMessageId: text("provider_message_id"),
+  errorText: text("error_text"),
+  attemptedAt: timestamp("attempted_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+});

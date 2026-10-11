@@ -1,5 +1,7 @@
-import DashboardContent from "@/app/dashboard/dashboard-content";
+import DashboardContent, { type DashboardSearchParams } from "@/app/dashboard/dashboard-content";
 
-export default async function DashboardPage() {
-  return <DashboardContent view="all" />;
+export default async function DashboardPage({ searchParams }: {
+  searchParams: Promise<DashboardSearchParams>;
+}) {
+  return <DashboardContent view="all" searchParams={searchParams} />;
 }

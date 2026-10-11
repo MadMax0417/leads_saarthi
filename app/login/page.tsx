@@ -2,6 +2,8 @@ import { ArrowRight, KeyRound, MapPin } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { login } from "@/app/auth-actions";
+import PendingButton from "@/app/pending-button";
+import PendingForm from "@/app/pending-form";
 import { getCurrentUser } from "@/lib/auth";
 
 const errorMessages: Record<string, string> = {
@@ -31,7 +33,7 @@ export default async function LoginPage({
 
         {error && <p className="auth-alert" role="alert">{errorMessages[error] || "Unable to sign in."}</p>}
 
-        <form className="auth-form" action={login}>
+        <PendingForm className="auth-form" action={login}>
           <label htmlFor="username">Username</label>
           <input
             id="username"
@@ -55,8 +57,8 @@ export default async function LoginPage({
             maxLength={128}
             required
           />
-          <button className="auth-submit" type="submit">Sign in <ArrowRight size={16} /></button>
-        </form>
+          <PendingButton className="auth-submit" pendingLabel="Signing in...">Sign in <ArrowRight size={16} /></PendingButton>
+        </PendingForm>
         <p className="auth-footnote">Accounts are provisioned by the workspace owner.</p>
       </section>
       <footer className="auth-footer"><span>LEADSSAARTHI</span><span>Business prospecting workspace</span></footer>

@@ -5,6 +5,8 @@ import { revalidatePath } from "next/cache";
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { requireReviewer, requireSalesperson, requireUser } from "@/lib/auth";
+import { getLeadsForExport, type LeadQueryFilters, type LeadView } from "@/lib/leads";
+import type { LeadContactDetailsState } from "@/lib/leads-shared";
 
 type BusinessInput = {
   businessName: string;
@@ -56,6 +58,25 @@ function validUrl(value: string | null, field: string) {
     throw new Error(`${field} must use HTTP or HTTPS.`);
   }
   return url.toString();
+}
+
+/** Trims a free-text field and treats an empty result as "not provided". */
+function blankToNull(value: string) {
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+/** Loose sanity check for hand-entered phone numbers. */
+function validPhoneNumber(value: string | null, field: string) {
+  if (!value) return null;
+  if (!/^[+()\-.\s/\d]+$/.test(value)) {
+    throw new Error(`${field} can only contain digits, spaces, and + ( ) - . / characters.`);
+  }
+  const digits = value.replace(/\D/g, "");
+  if (digits.length < 3 || digits.length > 20) {
+    throw new Error(`${field} must contain between 3 and 20 digits.`);
+  }
+  return value;
 }
 
 function normalizeBusiness(value: unknown): BusinessInput {
@@ -278,6 +299,55 @@ export async function saveLeadNotes(formData: FormData) {
   revalidatePath("/dashboard/qualified");
 }
 
+/**
+ * Saves the optional hand-entered phone / website for a lead (reviewer-only).
+ * An empty field clears it; a non-reviewer cannot reach the mutation because
+ * `requireReviewer()` runs before any input is read.
+ */
+export async function saveLeadContactDetails(
+  _previousState: LeadContactDetailsState,
+  formData: FormData,
+): Promise<LeadContactDetailsState> {
+  await requireReviewer();
+
+  const workItemId = String(formData.get("workItemId") ?? "");
+  if (!/^[0-9a-f-]{36}$/i.test(workItemId)) {
+    return { status: "error", message: "Invalid lead." };
+  }
+
+  const phoneValue = formData.get("phone");
+  const websiteValue = formData.get("website");
+  if (typeof phoneValue !== "string" || typeof websiteValue !== "string") {
+    return { status: "error", message: "Enter phone and website as text." };
+  }
+
+  let phone: string | null;
+  let website: string | null;
+  try {
+    if (phoneValue.length > 100) throw new Error("Phone is too long.");
+    if (websiteValue.length > 2048) throw new Error("Website is too long.");
+    phone = validPhoneNumber(blankToNull(phoneValue), "Phone");
+    website = validUrl(blankToNull(websiteValue), "Website");
+  } catch (error) {
+    return {
+      status: "error",
+      message: error instanceof Error ? error.message : "Enter valid contact details.",
+    };
+  }
+
+  await db.execute(sql`
+    UPDATE businesses SET phone = ${phone}, website = ${website}, updated_at = now()
+    WHERE id = (
+      SELECT business_id FROM lead_work_items
+      WHERE id = ${workItemId}::uuid AND archived_at IS NULL
+    )
+  `);
+  revalidatePath("/dashboard");
+  revalidatePath("/dashboard/unqualified");
+  revalidatePath("/dashboard/qualified");
+  return { status: "success", message: "Contact details saved." };
+}
+
 export async function markLeadReviewed(workItemId: string) {
   await requireReviewer();
   if (!/^[0-9a-f-]{36}$/i.test(workItemId)) throw new Error("Invalid lead.");
@@ -318,6 +388,24 @@ export async function archiveLeadsInView(view: string) {
   `);
   revalidatePath("/dashboard/unqualified");
   revalidatePath("/dashboard/qualified");
+}
+
+/**
+ * Server-fetches every lead in the active view (narrowed by the active filters)
+ * for the JSON export. The data never lives in the client beyond the request.
+ */
+export async function exportLeads(view: LeadView, filters: LeadQueryFilters = {}) {
+  const user = await requireUser();
+  const safeView: LeadView = user.role === "salesperson"
+    ? "qualified"
+    : view === "qualified" || view === "unqualified" ? view : "all";
+  const safeFilter = filters.filter === "phone" || filters.filter === "website" ? filters.filter : "all";
+
+  return getLeadsForExport(safeView, {
+    q: typeof filters.q === "string" ? filters.q.slice(0, 200) : "",
+    category: typeof filters.category === "string" ? filters.category.slice(0, 300) : "all",
+    filter: safeFilter,
+  });
 }
 
 export async function setSalesStatus(formData: FormData) {

@@ -2,6 +2,8 @@ import { ArrowLeft, KeyRound, MapPin } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { changePassword } from "@/app/auth-actions";
+import PendingButton from "@/app/pending-button";
+import PendingForm from "@/app/pending-form";
 import { getCurrentUser } from "@/lib/auth";
 
 const errorMessages: Record<string, string> = {
@@ -32,7 +34,7 @@ export default async function ChangePasswordPage({
         {error && <p className="auth-alert" role="alert">{errorMessages[error] || "Unable to change password."}</p>}
         {success && <p className="auth-success" role="status">Password updated. Your other sessions have been signed out.</p>}
 
-        <form className="auth-form" action={changePassword}>
+        <PendingForm className="auth-form" action={changePassword}>
           <label htmlFor="currentPassword">Current password</label>
           <input id="currentPassword" name="currentPassword" type="password" autoComplete="current-password" required />
           <label htmlFor="newPassword">New password</label>
@@ -40,8 +42,8 @@ export default async function ChangePasswordPage({
           <p className="password-hint">Use at least 12 characters.</p>
           <label htmlFor="confirmPassword">Confirm new password</label>
           <input id="confirmPassword" name="confirmPassword" type="password" autoComplete="new-password" minLength={12} maxLength={128} required />
-          <button className="auth-submit" type="submit">Update password <KeyRound size={15} /></button>
-        </form>
+          <PendingButton className="auth-submit" pendingLabel="Updating password...">Update password <KeyRound size={15} /></PendingButton>
+        </PendingForm>
         <Link className="auth-back-link" href="/dashboard"><ArrowLeft size={14} /> Back to dashboard</Link>
       </section>
       <footer className="auth-footer"><span>LEADSSAARTHI</span><span>Business prospecting workspace</span></footer>

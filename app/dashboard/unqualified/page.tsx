@@ -1,5 +1,7 @@
-import DashboardContent from "@/app/dashboard/dashboard-content";
+import DashboardContent, { type DashboardSearchParams } from "@/app/dashboard/dashboard-content";
 
-export default async function UnqualifiedLeadsPage() {
-  return <DashboardContent view="unqualified" />;
+export default async function UnqualifiedLeadsPage({ searchParams }: {
+  searchParams: Promise<DashboardSearchParams>;
+}) {
+  return <DashboardContent view="unqualified" searchParams={searchParams} />;
 }
